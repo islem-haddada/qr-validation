@@ -1,23 +1,29 @@
-import logo from './logo.svg';
-import './App.css';
+import React, { useState } from "react";
+import QrScanner from "react-qr-scanner";
 
 function App() {
+  const [qrData, setQrData] = useState("");
+
+  const handleScan = (data) => {
+    if (data) {
+      setQrData(data.text);
+    }
+  };
+
+  const handleError = (err) => {
+    console.error("Erreur de scan QR:", err);
+  };
+
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
+    <div style={{ textAlign: "center" }}>
+      <h1>Scanner de QR Code</h1>
+      <QrScanner
+        delay={300}
+        onScan={handleScan}
+        onError={handleError}
+        style={{ width: "300px" }}
+      />
+      <p>Données QR scannées : {qrData}</p>
     </div>
   );
 }
