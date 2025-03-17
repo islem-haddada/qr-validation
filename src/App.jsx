@@ -1,93 +1,131 @@
 import React, { useState, useEffect } from "react";
-import QrScanner from "react-qr-scanner";
+import { Html5Qrcode } from "html5-qrcode";
 import * as XLSX from "xlsx";
 
 function App() {
-  const [scannerActive, setScannerActive] = useState(false);
-  const [qrData, setQrData] = useState("");
-  const [excelData, setExcelData] = useState([]);
+  const [html5QrCode, setHtml5QrCode] = useState(null);
+  const [isScanning, setIsScanning] = useState(false);
+  const [qrData, setQrData] = useState(null);
   const [validationMessage, setValidationMessage] = useState("");
   const [isValid, setIsValid] = useState(null);
   const [scanHistory, setScanHistory] = useState([]);
+  const [excelData, setExcelData] = useState([]);
+
+  const startScanning = async () => {
+    try {
+      if (isScanning) {
+        await html5QrCode.stop();
+        setIsScanning(false);
+        return;
+      }
+
+      const newHtml5QrCode = new Html5Qrcode("reader");
+      setHtml5QrCode(newHtml5QrCode);
+
+      await newHtml5QrCode.start(
+        { facingMode: "environment" },
+        {
+          fps: 10,
+          qrbox: { width: 250, height: 250 },
+        },
+        (decodedText) => {
+          setQrData(decodedText);
+          validateQRCode(decodedText);
+        },
+        (error) => {
+          console.error("QR Code scanning error:", error);
+        }
+      );
+
+      setIsScanning(true);
+    } catch (err) {
+      console.error("Error starting scanner:", err);
+      setIsScanning(false);
+    }
+  };
+
+  const stopScanning = async () => {
+    if (html5QrCode) {
+      try {
+        await html5QrCode.stop();
+        setIsScanning(false);
+      } catch (err) {
+        console.error("Error stopping scanner:", err);
+      }
+    }
+  };
 
   const readExcelFile = (file) => {
     const reader = new FileReader();
     reader.onload = (e) => {
-      try {
-        const data = e.target.result;
-        const workbook = XLSX.read(data, { type: "binary" });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type: "array" });
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheetName];
+      const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: "A" });
 
-        const range = XLSX.utils.decode_range(worksheet["!ref"]);
-        const cellRef = XLSX.utils.encode_cell({ r: 0, c: 0 });
-        const firstCell = worksheet[cellRef];
-
-        if (firstCell && firstCell.v) {
-          setExcelData([{ nom: firstCell.v.toString() }]);
-          console.log("Excel content:", firstCell.v);
-        } else {
-          console.log("No data found in Excel");
-          setExcelData([]);
-        }
-      } catch (error) {
-        console.error("Error reading Excel:", error);
-        setValidationMessage("⚠️ Erreur de lecture du fichier Excel");
+      if (jsonData.length === 0) {
+        setValidationMessage("⚠️ Le fichier Excel est vide");
+        return;
       }
+
+      // Remove header row if exists
+      if (jsonData.length > 0) {
+        jsonData.shift();
+      }
+
+      // Transform data to match our needs
+      const transformedData = jsonData.map((row) => ({
+        code: row.A || "",
+        name: row.A || "",
+      }));
+
+      setExcelData(transformedData);
+      setValidationMessage("✅ Fichier Excel chargé avec succès");
+      setIsValid(null);
+
+      // Log the transformed data for debugging
+      console.log("Transformed Excel data:", transformedData);
     };
-    reader.readAsBinaryString(file);
+    reader.readAsArrayBuffer(file);
   };
 
-  const compareNameWithExcel = (scannedName) => {
-    if (!excelData || excelData.length === 0) {
-      setValidationMessage("⚠️ Veuillez charger le fichier Excel");
+  const validateQRCode = (scannedData) => {
+    if (excelData.length === 0) {
+      setValidationMessage("⚠️ Veuillez d'abord charger un fichier Excel");
+      setIsValid(false);
       return;
     }
 
-    const excelName = excelData[0].nom.toLowerCase().trim();
-    const scannedNameTrimmed = scannedName.toLowerCase().trim();
+    const match = excelData.find((row) => {
+      return row.code.toString().trim() === scannedData.trim();
+    });
 
-    const isValidScan = excelName === scannedNameTrimmed;
+    const isValidCode = Boolean(match);
+    setIsValid(isValidCode);
+    setValidationMessage(
+      isValidCode
+        ? `✅ Code valide : ${match.code}`
+        : "❌ Code non trouvé dans le fichier Excel"
+    );
 
+    const timestamp = new Date().toLocaleString();
     const newScan = {
-      name: scannedName,
-      timestamp: new Date().toLocaleString(),
-      isValid: isValidScan,
+      name: match ? match.code : scannedData,
+      code: scannedData,
+      timestamp,
+      isValid: isValidCode,
     };
+
     setScanHistory((prev) => [newScan, ...prev]);
-
-    if (isValidScan) {
-      setIsValid(true);
-      setValidationMessage(`✅ Nom validé : ${excelData[0].nom}`);
-    } else {
-      setIsValid(false);
-      setValidationMessage("❌ Nom non trouvé dans la liste");
-    }
-  };
-
-  const handleScan = (data) => {
-    if (data && data.text) {
-      const scannedText = data.text;
-      setQrData(scannedText);
-      compareNameWithExcel(scannedText);
-    }
-  };
-
-  const handleError = (err) => {
-    console.error("Erreur de scan : ", err);
-    setValidationMessage("⚠️ Erreur lors du scan");
-  };
-
-  const toggleScanner = () => {
-    setScannerActive(!scannerActive);
-    if (!scannerActive) {
-      setQrData("");
-      setValidationMessage("");
-      setIsValid(null);
-    }
   };
 
   const clearHistory = () => {
     setScanHistory([]);
+  };
+
+  const deleteHistoryItem = (index) => {
+    setScanHistory((prev) => prev.filter((_, i) => i !== index));
   };
 
   useEffect(() => {
@@ -102,118 +140,152 @@ function App() {
     };
 
     fileInput.addEventListener("change", handleFileChange);
-    return () => fileInput.removeEventListener("change", handleFileChange);
+    return () => {
+      fileInput.removeEventListener("change", handleFileChange);
+      stopScanning();
+    };
   }, []);
 
   return (
     <div
       className="App"
       style={{
-        maxWidth: "800px",
+        maxWidth: "1000px",
         margin: "0 auto",
-        padding: "20px",
-        backgroundColor: "#1a1a1a",
-        color: "#ffffff",
+        padding: "40px 20px",
+        backgroundColor: "#1E1E2E",
+        color: "#E4E6F0",
         minHeight: "100vh",
+        fontFamily: "'Segoe UI', system-ui, sans-serif",
       }}
     >
       <h1
         style={{
           textAlign: "center",
-          color: "#ffffff",
-          marginBottom: "30px",
+          fontSize: "2.8em",
+          fontWeight: "600",
+          marginBottom: "40px",
+          background: "linear-gradient(45deg, #4CAF50, #2196F3)",
+          WebkitBackgroundClip: "text",
+          WebkitTextFillColor: "transparent",
+          textShadow: "2px 2px 4px rgba(0,0,0,0.1)",
         }}
       >
-        Scanner QR Code et comparer avec Excel
+        🎯 Validation QR Code
       </h1>
 
-      <div style={{ marginBottom: "20px", textAlign: "center" }}>
+      <div style={{ marginBottom: "30px", textAlign: "center" }}>
         <button
-          onClick={toggleScanner}
+          onClick={startScanning}
           style={{
-            padding: "12px 24px",
-            fontSize: "16px",
-            backgroundColor: scannerActive ? "#ff4444" : "#4CAF50",
+            padding: "15px 35px",
+            fontSize: "18px",
+            backgroundColor: isScanning ? "#FF5252" : "#4CAF50",
             color: "white",
             border: "none",
-            borderRadius: "5px",
+            borderRadius: "12px",
             cursor: "pointer",
-            transition: "background-color 0.3s",
-            marginRight: "10px",
+            transition: "all 0.3s ease",
+            marginRight: "15px",
+            boxShadow: "0 4px 15px rgba(0,0,0,0.2)",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "10px",
+            fontWeight: "500",
           }}
         >
-          {scannerActive ? "Arrêter le scanner" : "Démarrer le scanner"}
+          {isScanning ? "🛑 Arrêter" : "📷 Scanner"}
         </button>
 
         <button
           onClick={clearHistory}
           style={{
-            padding: "12px 24px",
-            fontSize: "16px",
-            backgroundColor: "#ff9800",
+            padding: "15px 35px",
+            fontSize: "18px",
+            backgroundColor: "#2196F3",
             color: "white",
             border: "none",
-            borderRadius: "5px",
+            borderRadius: "12px",
             cursor: "pointer",
+            boxShadow: "0 4px 15px rgba(0,0,0,0.2)",
+            transition: "all 0.3s ease",
+            fontWeight: "500",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "10px",
           }}
         >
-          Effacer l'historique
+          🗑️ Effacer l'historique
         </button>
       </div>
 
       <div
         style={{
-          marginBottom: "20px",
+          marginBottom: "30px",
           textAlign: "center",
-          padding: "20px",
-          backgroundColor: "#333333",
-          borderRadius: "8px",
+          padding: "30px",
+          backgroundColor: "#282838",
+          borderRadius: "16px",
+          boxShadow: "0 8px 20px rgba(0,0,0,0.15)",
+          border: "1px solid rgba(255,255,255,0.1)",
         }}
       >
+        <label
+          htmlFor="excel-file"
+          style={{
+            display: "block",
+            marginBottom: "15px",
+            fontSize: "20px",
+            color: "#4CAF50",
+            fontWeight: "500",
+          }}
+        >
+          📊 Charger le fichier Excel
+        </label>
         <input
           type="file"
           id="excel-file"
           accept=".xlsx, .xls"
           style={{
-            margin: "10px 0",
-            color: "#ffffff",
+            padding: "12px",
+            width: "80%",
+            maxWidth: "400px",
+            backgroundColor: "#1E1E2E",
+            border: "2px dashed #4CAF50",
+            borderRadius: "12px",
+            color: "#E4E6F0",
+            cursor: "pointer",
           }}
         />
       </div>
 
-      {scannerActive && (
-        <div
-          style={{
-            marginBottom: "20px",
-            backgroundColor: "#333333",
-            padding: "20px",
-            borderRadius: "8px",
-          }}
-        >
-          <QrScanner
-            delay={300}
-            style={{
-              width: "100%",
-              height: "300px",
-              borderRadius: "4px",
-            }}
-            onError={handleError}
-            onScan={handleScan}
-          />
-        </div>
-      )}
+      <div
+        id="reader"
+        style={{
+          width: "100%",
+          backgroundColor: "#282838",
+          borderRadius: "16px",
+          overflow: "hidden",
+          marginBottom: "30px",
+          height: "400px",
+          boxShadow: "0 8px 20px rgba(0,0,0,0.15)",
+          border: "1px solid rgba(255,255,255,0.1)",
+        }}
+      ></div>
 
       {qrData && (
         <div
           style={{
-            marginTop: "20px",
-            padding: "15px",
-            backgroundColor: "#333333",
-            borderRadius: "8px",
+            marginTop: "30px",
+            padding: "20px",
+            backgroundColor: "#282838",
+            borderRadius: "16px",
+            boxShadow: "0 8px 20px rgba(0,0,0,0.15)",
+            border: "1px solid rgba(255,255,255,0.1)",
           }}
         >
-          <p style={{ margin: 0 }}>
-            <strong>Données scannées :</strong> {qrData}
+          <p style={{ margin: 0, fontSize: "18px", color: "#E4E6F0" }}>
+            <strong>📱 Données scannées :</strong> {qrData}
           </p>
         </div>
       )}
@@ -221,14 +293,18 @@ function App() {
       {validationMessage && (
         <div
           style={{
-            marginTop: "20px",
-            padding: "15px",
+            marginTop: "30px",
+            padding: "25px",
             backgroundColor: isValid
-              ? "rgba(76, 175, 80, 0.2)"
-              : "rgba(244, 67, 54, 0.2)",
-            borderRadius: "8px",
+              ? "rgba(76, 175, 80, 0.1)"
+              : "rgba(244, 67, 54, 0.1)",
+            borderRadius: "16px",
             textAlign: "center",
-            fontSize: "18px",
+            fontSize: "20px",
+            boxShadow: "0 8px 20px rgba(0,0,0,0.15)",
+            border: `2px solid ${
+              isValid ? "rgba(76, 175, 80, 0.5)" : "rgba(244, 67, 54, 0.5)"
+            }`,
           }}
         >
           {validationMessage}
@@ -237,44 +313,117 @@ function App() {
 
       <div
         style={{
-          marginTop: "30px",
-          backgroundColor: "#333333",
-          borderRadius: "8px",
-          padding: "20px",
+          marginTop: "40px",
+          backgroundColor: "#282838",
+          borderRadius: "16px",
+          padding: "30px",
+          boxShadow: "0 8px 20px rgba(0,0,0,0.15)",
+          border: "1px solid rgba(255,255,255,0.1)",
         }}
       >
-        <h2 style={{ marginBottom: "15px" }}>Historique des scans</h2>
+        <h2
+          style={{
+            marginBottom: "25px",
+            fontSize: "24px",
+            color: "#4CAF50",
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+          }}
+        >
+          📋 Historique des scans
+        </h2>
         {scanHistory.length === 0 ? (
-          <p>Aucun scan effectué</p>
+          <p
+            style={{
+              textAlign: "center",
+              opacity: 0.7,
+              fontSize: "16px",
+              padding: "20px",
+            }}
+          >
+            Aucun scan effectué
+          </p>
         ) : (
           <div
             style={{
-              maxHeight: "300px",
+              maxHeight: "400px",
               overflowY: "auto",
+              padding: "10px",
             }}
           >
             {scanHistory.map((scan, index) => (
               <div
                 key={index}
                 style={{
-                  padding: "10px",
-                  marginBottom: "10px",
+                  padding: "20px",
+                  marginBottom: "15px",
                   backgroundColor: scan.isValid
-                    ? "rgba(76, 175, 80, 0.2)"
-                    : "rgba(244, 67, 54, 0.2)",
-                  borderRadius: "4px",
+                    ? "rgba(76, 175, 80, 0.1)"
+                    : "rgba(244, 67, 54, 0.1)",
+                  borderRadius: "12px",
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "center",
+                  border: `1px solid ${
+                    scan.isValid
+                      ? "rgba(76, 175, 80, 0.3)"
+                      : "rgba(244, 67, 54, 0.3)"
+                  }`,
                 }}
               >
                 <div>
-                  <strong>{scan.name}</strong>
-                  <div style={{ fontSize: "0.8em", opacity: "0.8" }}>
-                    {scan.timestamp}
+                  <strong style={{ fontSize: "18px" }}>{scan.name}</strong>
+                  <div
+                    style={{
+                      fontSize: "14px",
+                      opacity: "0.8",
+                      marginTop: "8px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "5px",
+                    }}
+                  >
+                    🕒 {scan.timestamp}
                   </div>
                 </div>
-                <div>{scan.isValid ? "✅ Validé" : "❌ Non validé"}</div>
+                <div
+                  style={{ display: "flex", alignItems: "center", gap: "15px" }}
+                >
+                  <div
+                    style={{
+                      fontSize: "16px",
+                      padding: "8px 16px",
+                      borderRadius: "8px",
+                      backgroundColor: scan.isValid
+                        ? "rgba(76, 175, 80, 0.2)"
+                        : "rgba(244, 67, 54, 0.2)",
+                    }}
+                  >
+                    {scan.isValid ? "✅ Validé" : "❌ Non validé"}
+                  </div>
+                  <button
+                    onClick={() => deleteHistoryItem(index)}
+                    style={{
+                      padding: "10px",
+                      backgroundColor: "#FF5252",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "8px",
+                      cursor: "pointer",
+                      fontSize: "16px",
+                      transition: "all 0.3s ease",
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: "40px",
+                      height: "40px",
+                    }}
+                  >
+                    🗑️
+                  </button>
+                </div>
               </div>
             ))}
           </div>
