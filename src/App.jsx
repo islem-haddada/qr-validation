@@ -10,37 +10,65 @@ function App() {
   const [isValid, setIsValid] = useState(null);
   const [scanHistory, setScanHistory] = useState([]);
   const [excelData, setExcelData] = useState([]);
+  const [showScanner, setShowScanner] = useState(false);
 
   const startScanning = async () => {
     try {
       if (isScanning) {
-        await html5QrCode.stop();
+        await html5QrCode?.stop();
         setIsScanning(false);
+        setShowScanner(false);
         return;
       }
 
-      const newHtml5QrCode = new Html5Qrcode("reader");
-      setHtml5QrCode(newHtml5QrCode);
+      setShowScanner(true);
+      
+      // Wait for the DOM element to be available
+      setTimeout(async () => {
+        try {
+          const newHtml5QrCode = new Html5Qrcode("reader");
+          setHtml5QrCode(newHtml5QrCode);
 
-      await newHtml5QrCode.start(
-        { facingMode: "environment" },
-        {
-          fps: 10,
-          qrbox: { width: 250, height: 250 },
-        },
-        (decodedText) => {
-          setQrData(decodedText);
-          validateQRCode(decodedText);
-        },
-        (error) => {
-          console.error("QR Code scanning error:", error);
+          await newHtml5QrCode.start(
+            { facingMode: "environment" },
+            {
+              fps: 100,
+              qrbox: {
+                width: 450,
+                height: 450,
+              },
+              aspectRatio: 4/3,
+              qrboxFunction: (viewfinderWidth, viewfinderHeight) => {
+                let minEdgePercentage = 0.7; // Percentage of view finder width
+                let minEdgeSize = Math.min(viewfinderWidth, viewfinderHeight);
+                let qrboxSize = Math.floor(minEdgeSize * minEdgePercentage);
+                return {
+                  width: qrboxSize,
+                  height: qrboxSize
+                };
+              }
+            },
+            (decodedText) => {
+              setQrData(decodedText);
+              validateQRCode(decodedText);
+            },
+            (error) => {
+              console.error("QR Code scanning error:", error);
+            }
+          );
+
+          setIsScanning(true);
+        } catch (err) {
+          console.error("Error in setTimeout:", err);
+          setIsScanning(false);
+          setShowScanner(false);
         }
-      );
+      }, 100);
 
-      setIsScanning(true);
     } catch (err) {
       console.error("Error starting scanner:", err);
       setIsScanning(false);
+      setShowScanner(false);
     }
   };
 
@@ -48,7 +76,10 @@ function App() {
     if (html5QrCode) {
       try {
         await html5QrCode.stop();
+        html5QrCode.clear();
+        setHtml5QrCode(null);
         setIsScanning(false);
+        setShowScanner(false);
       } catch (err) {
         console.error("Error stopping scanner:", err);
       }
@@ -69,12 +100,10 @@ function App() {
         return;
       }
 
-      // Remove header row if exists
       if (jsonData.length > 0) {
         jsonData.shift();
       }
 
-      // Transform data to match our needs
       const transformedData = jsonData.map((row) => ({
         code: row.A || "",
         name: row.A || "",
@@ -83,9 +112,6 @@ function App() {
       setExcelData(transformedData);
       setValidationMessage("✅ Fichier Excel chargé avec succès");
       setIsValid(null);
-
-      // Log the transformed data for debugging
-      console.log("Transformed Excel data:", transformedData);
     };
     reader.readAsArrayBuffer(file);
   };
@@ -117,11 +143,40 @@ function App() {
       isValid: isValidCode,
     };
 
-    setScanHistory((prev) => [newScan, ...prev]);
+    setScanHistory((prev) => {
+      // Check if name already exists in history
+      const existingIndex = prev.findIndex(
+        (scan) => scan.name === newScan.name
+      );
+
+      if (existingIndex !== -1) {
+        // Update existing entry
+        const updatedHistory = [...prev];
+        updatedHistory[existingIndex] = newScan;
+        return updatedHistory;
+      }
+
+      // Add new entry if name doesn't exist
+      return [newScan, ...prev];
+    });
   };
 
   const clearHistory = () => {
     setScanHistory([]);
+  };
+
+  const downloadHistory = () => {
+    const historyData = scanHistory.map(scan => ({
+      Nom: scan.name,
+      Code: scan.code,
+      'Date et Heure': scan.timestamp,
+      Statut: scan.isValid ? 'Validé' : 'Non validé'
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(historyData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Historique des scans");
+    XLSX.writeFile(wb, `historique_scans_${new Date().toLocaleDateString().replace(/\//g, '-')}.xlsx`);
   };
 
   const deleteHistoryItem = (index) => {
@@ -150,10 +205,10 @@ function App() {
     <div
       className="App"
       style={{
-        maxWidth: "1000px",
+        maxWidth: "1200px",
         margin: "0 auto",
         padding: "40px 20px",
-        backgroundColor: "#1E1E2E",
+        backgroundColor: "#1A1B26",
         color: "#E4E6F0",
         minHeight: "100vh",
         fontFamily: "'Segoe UI', system-ui, sans-serif",
@@ -162,19 +217,27 @@ function App() {
       <h1
         style={{
           textAlign: "center",
-          fontSize: "2.8em",
-          fontWeight: "600",
+          fontSize: "3.2em",
+          fontWeight: "700",
           marginBottom: "40px",
           background: "linear-gradient(45deg, #4CAF50, #2196F3)",
           WebkitBackgroundClip: "text",
           WebkitTextFillColor: "transparent",
-          textShadow: "2px 2px 4px rgba(0,0,0,0.1)",
+          textShadow: "2px 2px 4px rgba(0,0,0,0.2)",
+          letterSpacing: "-1px",
         }}
       >
         🎯 Validation QR Code
       </h1>
 
-      <div style={{ marginBottom: "30px", textAlign: "center" }}>
+      <div style={{ 
+        marginBottom: "30px", 
+        textAlign: "center",
+        display: "flex",
+        justifyContent: "center",
+        gap: "20px",
+        flexWrap: "wrap"
+      }}>
         <button
           onClick={startScanning}
           style={{
@@ -197,12 +260,16 @@ function App() {
           {isScanning ? "🛑 Arrêter" : "📷 Scanner"}
         </button>
 
+        <button onClick={clearHistory} style={{ /* ... existing styles ... */ }}>
+          🗑️ Effacer l'historique
+        </button>
+
         <button
-          onClick={clearHistory}
+          onClick={downloadHistory}
           style={{
             padding: "15px 35px",
             fontSize: "18px",
-            backgroundColor: "#2196F3",
+            backgroundColor: "#9C27B0",
             color: "white",
             border: "none",
             borderRadius: "12px",
@@ -213,9 +280,10 @@ function App() {
             display: "inline-flex",
             alignItems: "center",
             gap: "10px",
+            marginLeft: "15px",
           }}
         >
-          🗑️ Effacer l'historique
+          📥 Télécharger l'historique
         </button>
       </div>
 
@@ -225,9 +293,10 @@ function App() {
           textAlign: "center",
           padding: "30px",
           backgroundColor: "#282838",
-          borderRadius: "16px",
-          boxShadow: "0 8px 20px rgba(0,0,0,0.15)",
+          borderRadius: "20px",
+          boxShadow: "0 8px 32px rgba(0,0,0,0.2)",
           border: "1px solid rgba(255,255,255,0.1)",
+          backdropFilter: "blur(10px)",
         }}
       >
         <label
@@ -259,175 +328,144 @@ function App() {
         />
       </div>
 
-      <div
-        id="reader"
-        style={{
-          width: "100%",
-          backgroundColor: "#282838",
-          borderRadius: "16px",
-          overflow: "hidden",
-          marginBottom: "30px",
-          height: "400px",
-          boxShadow: "0 8px 20px rgba(0,0,0,0.15)",
-          border: "1px solid rgba(255,255,255,0.1)",
-        }}
-      ></div>
-
-      {qrData && (
+      {showScanner && (
         <div
+          id="reader"
           style={{
-            marginTop: "30px",
-            padding: "20px",
+            width: "100%",
+            maxWidth: "900px",
+            margin: "0 auto",
             backgroundColor: "#282838",
-            borderRadius: "16px",
-            boxShadow: "0 8px 20px rgba(0,0,0,0.15)",
+            borderRadius: "20px",
+            overflow: "hidden",
+            marginBottom: "30px",
+            height: "600px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            boxShadow: "0 8px 32px rgba(0,0,0,0.2)",
             border: "1px solid rgba(255,255,255,0.1)",
           }}
-        >
-          <p style={{ margin: 0, fontSize: "18px", color: "#E4E6F0" }}>
-            <strong>📱 Données scannées :</strong> {qrData}
-          </p>
-        </div>
+        ></div>
       )}
 
-      {validationMessage && (
-        <div
-          style={{
-            marginTop: "30px",
-            padding: "25px",
-            backgroundColor: isValid
-              ? "rgba(76, 175, 80, 0.1)"
-              : "rgba(244, 67, 54, 0.1)",
-            borderRadius: "16px",
-            textAlign: "center",
-            fontSize: "20px",
-            boxShadow: "0 8px 20px rgba(0,0,0,0.15)",
-            border: `2px solid ${
-              isValid ? "rgba(76, 175, 80, 0.5)" : "rgba(244, 67, 54, 0.5)"
-            }`,
-          }}
-        >
-          {validationMessage}
-        </div>
-      )}
-
+      {/* Update the scan history section */}
       <div
         style={{
           marginTop: "40px",
           backgroundColor: "#282838",
-          borderRadius: "16px",
-          padding: "30px",
-          boxShadow: "0 8px 20px rgba(0,0,0,0.15)",
+          borderRadius: "20px",
+          padding: "40px",
+          boxShadow: "0 8px 32px rgba(0,0,0,0.2)",
           border: "1px solid rgba(255,255,255,0.1)",
+          maxWidth: "900px",
+          margin: "0 auto",
         }}
       >
         <h2
           style={{
-            marginBottom: "25px",
-            fontSize: "24px",
+            marginBottom: "30px",
+            fontSize: "28px",
             color: "#4CAF50",
             display: "flex",
             alignItems: "center",
-            gap: "10px",
+            gap: "12px",
+            borderBottom: "2px solid rgba(76, 175, 80, 0.3)",
+            paddingBottom: "15px",
           }}
         >
           📋 Historique des scans
         </h2>
-        {scanHistory.length === 0 ? (
-          <p
-            style={{
-              textAlign: "center",
-              opacity: 0.7,
-              fontSize: "16px",
-              padding: "20px",
-            }}
-          >
-            Aucun scan effectué
-          </p>
-        ) : (
-          <div
-            style={{
-              maxHeight: "400px",
-              overflowY: "auto",
-              padding: "10px",
-            }}
-          >
-            {scanHistory.map((scan, index) => (
-              <div
-                key={index}
-                style={{
-                  padding: "20px",
-                  marginBottom: "15px",
-                  backgroundColor: scan.isValid
-                    ? "rgba(76, 175, 80, 0.1)"
-                    : "rgba(244, 67, 54, 0.1)",
-                  borderRadius: "12px",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  border: `1px solid ${
-                    scan.isValid
-                      ? "rgba(76, 175, 80, 0.3)"
-                      : "rgba(244, 67, 54, 0.3)"
-                  }`,
-                }}
-              >
-                <div>
-                  <strong style={{ fontSize: "18px" }}>{scan.name}</strong>
-                  <div
-                    style={{
-                      fontSize: "14px",
-                      opacity: "0.8",
-                      marginTop: "8px",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "5px",
-                    }}
-                  >
-                    🕒 {scan.timestamp}
-                  </div>
-                </div>
+        
+        {/* Update the scan history items */}
+        <div
+          style={{
+            maxHeight: "500px",
+            overflowY: "auto",
+            padding: "15px",
+            scrollBehavior: "smooth",
+          }}
+        >
+          {scanHistory.map((scan, index) => (
+            <div
+              key={index}
+              style={{
+                padding: "25px",
+                marginBottom: "20px",
+                backgroundColor: scan.isValid
+                  ? "rgba(76, 175, 80, 0.15)"
+                  : "rgba(244, 67, 54, 0.15)",
+                borderRadius: "16px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                border: `1px solid ${
+                  scan.isValid
+                    ? "rgba(76, 175, 80, 0.4)"
+                    : "rgba(244, 67, 54, 0.4)"
+                }`,
+                transition: "transform 0.2s ease",
+                cursor: "default",
+                "&:hover": {
+                  transform: "translateY(-2px)",
+                },
+              }}
+            >
+              <div>
+                <strong style={{ fontSize: "18px" }}>{scan.name}</strong>
                 <div
-                  style={{ display: "flex", alignItems: "center", gap: "15px" }}
+                  style={{
+                    fontSize: "14px",
+                    opacity: "0.8",
+                    marginTop: "8px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "5px",
+                  }}
                 >
-                  <div
-                    style={{
-                      fontSize: "16px",
-                      padding: "8px 16px",
-                      borderRadius: "8px",
-                      backgroundColor: scan.isValid
-                        ? "rgba(76, 175, 80, 0.2)"
-                        : "rgba(244, 67, 54, 0.2)",
-                    }}
-                  >
-                    {scan.isValid ? "✅ Validé" : "❌ Non validé"}
-                  </div>
-                  <button
-                    onClick={() => deleteHistoryItem(index)}
-                    style={{
-                      padding: "10px",
-                      backgroundColor: "#FF5252",
-                      color: "white",
-                      border: "none",
-                      borderRadius: "8px",
-                      cursor: "pointer",
-                      fontSize: "16px",
-                      transition: "all 0.3s ease",
-                      boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      width: "40px",
-                      height: "40px",
-                    }}
-                  >
-                    🗑️
-                  </button>
+                  🕒 {scan.timestamp}
                 </div>
               </div>
-            ))}
-          </div>
-        )}
+              <div
+                style={{ display: "flex", alignItems: "center", gap: "15px" }}
+              >
+                <div
+                  style={{
+                    fontSize: "16px",
+                    padding: "8px 16px",
+                    borderRadius: "8px",
+                    backgroundColor: scan.isValid
+                      ? "rgba(76, 175, 80, 0.2)"
+                      : "rgba(244, 67, 54, 0.2)",
+                  }}
+                >
+                  {scan.isValid ? "✅ Validé" : "❌ Non validé"}
+                </div>
+                <button
+                  onClick={() => deleteHistoryItem(index)}
+                  style={{
+                    padding: "10px",
+                    backgroundColor: "#FF5252",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "8px",
+                    cursor: "pointer",
+                    fontSize: "16px",
+                    transition: "all 0.3s ease",
+                    boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: "40px",
+                    height: "40px",
+                  }}
+                >
+                  🗑️
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
